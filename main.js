@@ -80,4 +80,74 @@ function startTracking() {
     alert("Geolocation is not supported by your browser.");
     return;
   }
+
+  isTracking = true;
+  startTime = Date.now();
+  currentCoords = [];
+  btnTrack.textContent = "Stop Tracking";
+  btnTrack.classList.add("tracking");
+  btnAddPoint.disabled = false;
+
+  trackSource.clear();
+  positionSource.clear();
+
+  let centeredOnFrirst = false;
+
+  watchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      const { latitude, longitude } = pos.coords;
+      const coords = { lat: latitude, lon: longitude, timestamp: Date.now() };
+      currentCoords.push(coords);
+
+      const mapCoord = fromLonLat([longitude, latitude]);
+      positionFeature.setGeometry(new Point(mapCoord));
+
+      if (!centeredOnFrirst) {
+        map.getView().setCenter(mapCoord);
+        map.getView().setZoom(16);
+        centeredOnFrirst = true;
+      }
+
+      if (currentCoords.length >= 2) {
+        trackSource.clear();
+        const linecoords = currentCoords.map((c) => fromLonLat([c.lon, c.lat]));
+        const linefeature = new Feature(new LineString(linecoords));
+        linefeature.setStyle(
+          new Style({
+            stroke: new Stroke({ color: "#3b82f6", width: 3 }),
+          }),
+        );
+        trackSource.addFeature(linefeature);
+      }
+    },
+    (err) => {
+      alert("Failed to get position:" + err.message);
+      stopTracking();
+    },
+    { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 },
+  );
+}
+
+function stopTracking() {
+  if (watchId !== null) {
+    navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+  }
+
+  isTracking = false;
+  btnTrack.textContent = "Start Tracking";
+  btnTrack.classList.remove("tracking");
+  btnAddPoint.disabled = true;
+  positionSource.removeFeature(positionFeature);
+
+  if (currentCoords.length === 0) return;
+
+  // Save session
+  const session = {
+    id: crypto.randomUUID(),
+    startTime,
+    endTime: Date.now(),
+    coords: currentCoords,
+    points: [],
+  };
 }
