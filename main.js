@@ -7,15 +7,13 @@ import OSM from "ol/source/OSM";
 import { fromLonLat, toLonLat } from "ol/proj";
 import { LineString, Point } from "ol/geom";
 import { Circle as CircleStyle, Fill, Stroke, Style, Icon } from "ol/style";
-import { Vector } from "ol/source";
 
 const STORAGE_KEY = "gps-tracking-sessions";
 
 function loadSessions() {
   try {
     return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
-  } catch (e) {
-    console.error("Failed to load sessions:", e);
+  } catch {
     return [];
   }
 }
@@ -44,7 +42,7 @@ const map = new Map({
   }),
 });
 
-navigation.geolocation.getCurrentPosition(
+navigator.geolocation.getCurrentPosition(
   (pos) => {
     map
       .getView()
@@ -75,6 +73,8 @@ btnAddPoint.addEventListener("click", () => {
   addPoint();
 });
 
+btnTrack.addEventListener("click", () => { isTracking ? stopTracking() : startTracking(); });
+
 function startTracking() {
   if (!navigator.geolocation) {
     alert("Geolocation is not supported by your browser.");
@@ -90,8 +90,9 @@ function startTracking() {
 
   trackSource.clear();
   positionSource.clear();
+  positionSource.addFeature(positionFeature);
 
-  let centeredOnFrirst = false;
+  let centeredOnFirst = false;
 
   watchId = navigator.geolocation.watchPosition(
     (pos) => {
@@ -102,10 +103,10 @@ function startTracking() {
       const mapCoord = fromLonLat([longitude, latitude]);
       positionFeature.setGeometry(new Point(mapCoord));
 
-      if (!centeredOnFrirst) {
+      if (!centeredOnFirst) {
         map.getView().setCenter(mapCoord);
         map.getView().setZoom(16);
-        centeredOnFrirst = true;
+        centeredOnFirst = true;
       }
 
       if (currentCoords.length >= 2) {
@@ -150,4 +151,161 @@ function stopTracking() {
     coords: currentCoords,
     points: [],
   };
+
+  // Collect points added during the session
+  session.points = currentSessionPoints.slice();
+  currentSessionPoints = [];
+
+  const sessions = loadSessions();
+  sessions.push(session);
+  saveSessions(sessions);
+
+  // Draw session on map
+  trackSource.clear();
+  drawSessionOnMap(session, "#3b82f6");
+
+  renderSessionList();
 }
+
+// Add point
+let currentSessionPoints = [];
+
+function addPoint() {
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const { latitude, longitude } = pos.coords;
+      const point = { lat: latitude, lon: longitude, timestamp: Date.now() };
+
+      if (isTracking) {
+        currentSessionPoints.push(point);
+      } else {
+        const session = {
+          id: crypto.randomUUID(),
+          startTime: Date.now(),
+          endTime: Date.now(),
+          coords: [],
+          points: [point],
+        };
+        const sessions = loadSessions();
+        sessions.push(session);
+        saveSessions(sessions);
+        renderSessionList();
+      }
+
+      // Show marker on map
+      const mapCoord = fromLonLat([longitude, latitude]);
+      const marker = new Feature(new Point(mapCoord));
+      marker.setStyle(
+        new Style({
+          image: new CircleStyle({
+            radius: 6,
+            fill: new Fill({ color: "#ef4444" }),
+            stroke: new Stroke({ color: "white", width: 2 }),
+          }),
+        }),
+      );
+      trackSource.addFeature(marker);
+    },
+    (err) => {
+      alert("Failed to get position:" + err.message);
+    },
+    { enableHighAccuracy: true },
+  );
+}
+
+function drawSessionOnMap(session, color) {
+  sessionSource.clear();
+
+  if (session.coords.length >= 2) {
+    const lineCoords = session.coords.map((c) => fromLonLat([c.lon, c.lat]));
+    const lineFeature = new Feature(new LineString(lineCoords));
+    lineFeature.setStyle(
+      new Style({
+        stroke: new Stroke({ color, width: 4 }),
+      }),
+    );
+    sessionSource.addFeature(lineFeature);
+  }
+
+  // Draw points
+  if (session.points) {
+    session.points.forEach((point) => {
+      const marker = new Feature(new Point(fromLonLat([point.lon, point.lat])));
+      marker.setStyle(
+        new Style({
+          image: new CircleStyle({
+            radius: 6,
+            fill: new Fill({ color: "#ef4444" }),
+            stroke: new Stroke({ color: "white", width: 2 }),
+          }),
+        }),
+      );
+      sessionSource.addFeature(marker);
+    });
+  }
+
+  // Fit view
+  if (sessionSource.getFeatures().length > 0) {
+    map.getView().fit(sessionSource.getExtent(), {
+      padding: [50, 50, 50, 50],
+      maxZoom: 18,
+    });
+  }
+}
+
+// Session list UI
+let activeSessionId = null;
+
+function renderSessionList() {
+  const list = document.getElementById("sessions-list");
+  const sessions = loadSessions();
+  list.innerHTML = "";
+
+  if (sessions.length === 0) {
+    list.innerHTML = '<li style="color: #94a3b8">No sessions recorded</li>';
+    return;
+  }
+
+  sessions.forEach((s) => {
+    const li = document.createElement("li");
+
+    const info = document.createElement("span");
+    info.className = "session-info";
+    const start = new Date(s.startTime).toLocaleString("nb-NO");
+    const pointCount = s.coords.length;
+    const waypointCount = s.points ? s.points.length : 0;
+    info.textContent = `${start} (${pointCount} pos, ${waypointCount} pkt)`;
+    info.addEventListener("click", () => {
+      activeSessionId = s.id;
+      trackSource.clear();
+      drawSessionOnMap(s, "#8b5cf6");
+    });
+
+    const btnDel = document.createElement("button");
+    btnDel.className = "delete-btn";
+    btnDel.textContent = "Delete";
+    btnDel.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteSession(s.id);
+    });
+
+    li.appendChild(info);
+    li.appendChild(btnDel);
+    list.appendChild(li);
+  });
+}
+
+function deleteSession(id) {
+  let sessions = loadSessions();
+  sessions = sessions.filter((s) => s.id !== id);
+  saveSessions(sessions);
+
+  if (activeSessionId === id) {
+    sessionSource.clear();
+    activeSessionId = null;
+  }
+
+  renderSessionList();
+}
+
+renderSessionList();
