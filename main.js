@@ -73,7 +73,9 @@ btnAddPoint.addEventListener("click", () => {
   addPoint();
 });
 
-btnTrack.addEventListener("click", () => { isTracking ? stopTracking() : startTracking(); });
+btnTrack.addEventListener("click", () => {
+  isTracking ? stopTracking() : startTracking();
+});
 
 function startTracking() {
   if (!navigator.geolocation) {
@@ -119,6 +121,20 @@ function startTracking() {
           }),
         );
         trackSource.addFeature(linefeature);
+
+        currentSessionPoints.forEach((p) => {
+          const m = new Feature(new Point(fromLonLat([p.lon, p.lat])));
+          m.setStyle(
+            new Style({
+              image: new CircleStyle({
+                radius: 6,
+                fill: new Fill({ color: "#ef4444" }),
+                stroke: new Stroke({ color: "white", width: 2 }),
+              }),
+            }),
+          );
+          trackSource.addFeature(m);
+        });
       }
     },
     (err) => {
